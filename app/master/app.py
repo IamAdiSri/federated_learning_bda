@@ -9,11 +9,6 @@ import hashlib
 
 from flask import Flask, request, Response
 
-import pandas as pd
-import numpy as np
-
-from simpletransformers.classification import ClassificationModel, ClassificationArgs
-from sklearn.metrics import classification_report
 from .fl import evaluate_model, map_func, reduce_func
 
 from google.cloud import storage
@@ -22,20 +17,23 @@ from pyspark.sql import SparkSession
 
 app = Flask(__name__)
 
-# # Set up pyspark
-# sparkConf = SparkConf().setAppName("GCSFilesRead").set("spark.executor.memory", "5g").set("spark.driver.memory", "5g")
-# spark = SparkSession.builder.config(conf=sparkConf).getOrCreate()
-# spark._jsc.hadoopConfiguration().set("google.cloud.auth.service.account.json.keyfile", "credentials.json")
-
-# # set up google cloud storage
-# storage_client = storage.Client.from_service_account_json("credentials.json")
-
 BUCKET_NAME = os.getenv("BUCKET_NAME") if os.getenv("BUCKET_NAME") else "bdastorage"
+BUCKET_PREFIX = "models" # folder in bucket where models are stored
 MODEL_VER = 0
-MODEL_DIR = os.getenv("MODEL_DIR") if os.getenv("MODEL_DIR") else "/home/adisri/bda/proj/ops/models/"
-DATA_DIR = os.getenv("DATA_DIR") if os.getenv("DATA_DIR") else "/home/adisri/bda/proj/ops/splits/"
+MODEL_DIR = os.getenv("MODEL_DIR") if os.getenv("MODEL_DIR") else "/home/adisri/bda/proj/ops/models" # folder on vm where models from the bucket are downloaded to
+DATA_DIR = os.getenv("DATA_DIR") if os.getenv("DATA_DIR") else "/home/adisri/bda/proj/ops/splits" # folder on vm where data from the bucket is downloaded to
 AVERAGING_ALGORITHM = "mean"
 FETCH_COUNTER = 0
+
+# Set up pyspark
+sparkConf = SparkConf().setAppName("GCSFilesRead").set("spark.executor.memory", "5g").set("spark.driver.memory", "5g")
+# sparkConf = SparkConf().setAppName("GCSFilesRead").set("spark.executor.memory", "5g").set("spark.driver.memory", "5g").set("spark.pyspark.python", "python3.9")
+spark = SparkSession.builder.config(conf=sparkConf).getOrCreate()
+spark._jsc.hadoopConfiguration().set("google.cloud.auth.service.account.json.keyfile", "credentials.json")
+
+# set up google cloud storage
+storage_client = storage.Client.from_service_account_json("credentials.json")
+bucket = storage_client.get_bucket(BUCKET_NAME)
 
 @app.route("/")
 def index():
@@ -163,8 +161,6 @@ def average_models():
 
     MODEL_VER += 1
     evaluate_model(model_loc, data_loc)
-
-    # TODO: notify clients via callback that a new model is available
     return
 
 def weight_average_models():
@@ -176,6 +172,19 @@ def weight_average_models():
     MODEL_VER += 1
     evaluate_model()
     return
+
+def bucket_list(dir_loc):
+    blobs = bucket.list_blobs(prefix=dir_loc)
+    return [b.split('/')[-1] if not b.name.endswith('/') 
+            else b.split('/')[-2]+'/' for b in blobs]
+
+def bucket_write(file_loc, tgt_loc):
+    blob = bucket.blob(file_loc)
+    blob.upload_from_filename(tgt_loc)
+
+def bucket_read(tgt_loc, file_loc):
+    blob = bucket.blob(tgt_loc)
+    blob.download_to_filename(file_loc)
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000, debug=True)
