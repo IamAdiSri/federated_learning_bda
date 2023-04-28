@@ -20,7 +20,7 @@ app = Flask(__name__)
 
 BUCKET_NAME = os.getenv("BUCKET_NAME") if os.getenv("BUCKET_NAME") else "bdastorage"
 AVG_ALGO = os.getenv("AVG_ALGO") if os.getenv("AVG_ALGO") else "mean"
-MODEL_VER = os.getenv("MODEL_VER") if os.getenv("MODEL_VER") else "0"
+MODEL_VER = None
 STATUS = None
 FETCH_COUNTER = 0
 
@@ -242,4 +242,10 @@ def fl_status(op="read"):
 
 if __name__ == '__main__':
     fl_status(op="read")
+    MODEL_VER = STATUS["version"]
+    print(f"SERVER LOG: BUCKET_NAME={BUCKET_NAME}")
+    print(f"SERVER LOG: AVG_ALGO={AVG_ALGO}")
+    print(f"SERVER LOG: STATUS={STATUS}")
+    print(f"SERVER LOG: MODEL_VER={MODEL_VER}")
+    print(f"SERVER LOG: FETCH_COUNTER={FETCH_COUNTER}")
     app.run(host="0.0.0.0", port=5000, debug=True)
