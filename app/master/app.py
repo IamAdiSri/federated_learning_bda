@@ -10,7 +10,7 @@ import hashlib
 
 from flask import Flask, request, Response
 
-from .fl import evaluate_model, map_func, reduce_func
+from fl import evaluate_model, map_func, reduce_func
 
 from google.cloud import storage
 from pyspark import SparkConf
