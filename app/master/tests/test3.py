@@ -47,7 +47,7 @@ os.makedirs("averaged")
 avg_model.save_pretrained("averaged") # saving averaged model
 os.system("zip -r averaged.zip averaged/")
 
-blob = bucket.blob("models/averaged")
+blob = bucket.blob("models/averaged.zip")
 blob.upload_from_filename("averaged.zip")
 
 print(avg_model, time.time()-ct)

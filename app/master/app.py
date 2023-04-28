@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 
 import json
 import io
@@ -18,21 +19,17 @@ from pyspark.sql import SparkSession
 app = Flask(__name__)
 
 BUCKET_NAME = os.getenv("BUCKET_NAME") if os.getenv("BUCKET_NAME") else "bdastorage"
-BUCKET_PREFIX = "models" # folder in bucket where models are stored
-MODEL_VER = 0
-MODEL_DIR = os.getenv("MODEL_DIR") if os.getenv("MODEL_DIR") else "/home/adisri/bda/proj/ops/models" # folder on vm where models from the bucket are downloaded to
-DATA_DIR = os.getenv("DATA_DIR") if os.getenv("DATA_DIR") else "/home/adisri/bda/proj/ops/splits" # folder on vm where data from the bucket is downloaded to
-AVERAGING_ALGORITHM = "mean"
+AVG_ALGO = os.getenv("AVG_ALGO") if os.getenv("AVG_ALGO") else "mean"
+MODEL_VER = os.getenv("MODEL_VER") if os.getenv("MODEL_VER") else "0"
+STATUS = None
 FETCH_COUNTER = 0
 
 # Set up pyspark
-sparkConf = SparkConf().setAppName("GCSFilesRead").set("spark.executor.memory", "5g").set("spark.driver.memory", "5g")
-# sparkConf = SparkConf().setAppName("GCSFilesRead").set("spark.executor.memory", "5g").set("spark.driver.memory", "5g").set("spark.pyspark.python", "python3.9")
+sparkConf = SparkConf()
 spark = SparkSession.builder.config(conf=sparkConf).getOrCreate()
-spark._jsc.hadoopConfiguration().set("google.cloud.auth.service.account.json.keyfile", "credentials.json")
 
 # set up google cloud storage
-storage_client = storage.Client.from_service_account_json("credentials.json")
+storage_client = storage.Client()
 bucket = storage_client.get_bucket(BUCKET_NAME)
 
 @app.route("/")
@@ -52,11 +49,11 @@ def tracker():
 @app.route("/fetch_model/<int:version>", methods=["GET"])
 def fetch_model(version):
     """
-    Fetch the most recent global model as a zip file.
+    Fetch the most global model of the specified version as a zip file.
     """
     global FETCH_COUNTER
 
-    if version > MODEL_VER:
+    if version != MODEL_VER:
         print(f"SERVER LOG: Version requested is unavailable")
         return Response(
             response = json.dumps({
@@ -66,125 +63,183 @@ def fetch_model(version):
             status = 404
         )
     
-    try:
-        GLOBAL_MODEL = f"{MODEL_DIR}/global_v{MODEL_VER}"
-        # TODO: fetch global model from bucket
-        with open(f"{GLOBAL_MODEL}.zip", 'rb') as f:
-            data = f.read()
-
-    except FileNotFoundError:
-        if os.path.isdir(f"{GLOBAL_MODEL}"):
-            os.system(f"zip {GLOBAL_MODEL}.zip {GLOBAL_MODEL}/*")
-            print(f"SERVER LOG: Found and zipped files for model {GLOBAL_MODEL}")
-            # TODO: fetch global model from bucket
-            with open(f"{GLOBAL_MODEL}.zip", 'rb') as f:
-                data = f.read()
+    if os.path.exists(f"global_v{version}.zip"):
+        print(f"SERVER LOG: Found global_v{version}.zip")
+    elif os.path.exists(f"global_v{version}/"):
+        print(f"SERVER LOG: Found directory global_v{version}")
+        os.system(f"zip -r global_v{version}.zip global_v{version}")
+    else:
+        blob = bucket.blob(f"models/global_v{version}.zip")
+        if blob.exists():
+            print(f"SERVER LOG: Found global_v{version} on bucket")
+            blob.download_to_filename(f"global_v{version}.zip")
         else:
-            print(f"SERVER LOG: Could not find model {GLOBAL_MODEL}")
+            print(f"SERVER LOG: Could not find global_v{version}")
             return Response(
                 response = json.dumps({
-                    "resource": GLOBAL_MODEL,
+                    "resource": f"global_v{version}",
                     "details": "Could not find resource"
                 }),
                 status = 500
-        )
+            )
+
+    with open(f"global_v{version}.zip", 'rb') as f:
+        data = f.read()
     
-    FETCH_COUNTER += 1
+    if STATUS["merging"] and STATUS["evaluating"]:
+        # If client models are being merged or evaluated, do not 
+        # allow a new merge to start by updating the FETCH_COUNTER
+        print(f"SERVER LOG: Global model is being merged/evaluated")
+    else:
+        FETCH_COUNTER += 1
     print(f"SERVER LOG: {FETCH_COUNTER} finetune requests pending")
 
-    print(f"SERVER LOG: Sending model {GLOBAL_MODEL} to client")
+    print(f"SERVER LOG: Sending model global_v{version}.zip to client")
     return Response(
         response = io.BytesIO(data),
         status = 200,
         headers = {"Content-Type": "application/zip"}
     )
 
-@app.route("/upload_model", methods=["POST"])
-def upload_model():
+@app.route("/upload_model/<int:version>", methods=["POST"])
+def upload_model(version):
     """
     Upload a finetuned model.
     """
     global FETCH_COUNTER
+    global STATUS
+
+    if version != MODEL_VER:
+        print(f"SERVER LOG: Upload request is for a bad version")
+        return Response(
+            response = json.dumps({
+                "resource": f"local_v{version}",
+                "details": "Upload request is for a bad version"
+            }),
+            status = 404
+        )
+    elif STATUS["merging"] or STATUS["evaluating"]:
+        print(f"SERVER LOG: Upload request denied as the global model is being merged/evaluated")
+        return Response(
+            response = json.dumps({
+                "resource": f"local_v{version}",
+                "details": "Upload request denied"
+            }),
+            status = 404
+        )
 
     r = request.get_json()
 
     # decode data to binary object
     model = base64.b64decode(r["model"])
-
-    # TODO: upload model to bucket
-    LOCAL_MODEL_DIR = f"{MODEL_DIR}/local_v{MODEL_VER}"
+    sample_size = int(r["sample_size"])
 
     # get hash value of object
     hash = hashlib.sha256(model).hexdigest()
 
-    if not os.path.isdir(LOCAL_MODEL_DIR):
-        os.makedirs(f"{LOCAL_MODEL_DIR}")
-        print(f"SERVER LOG: Created directory {LOCAL_MODEL_DIR}")
+    blob = bucket.blob(f"models/local_v{version}_{hash}.zip")
+    blob.upload_from_file(io.BytesIO(model))
+    print(f"SERVER LOG: Saved local_v{version}_{hash}.zip to bucket")
 
-    with open(f"{LOCAL_MODEL_DIR}/{hash}.zip", "wb") as f:
-        f.write(io.BytesIO(model))
+    # update weights in status variable
+    STATUS["sample_sizes"][hash] = sample_size
+    fl_status(op="write")
 
     FETCH_COUNTER -= 1
     print(f"SERVER LOG: {FETCH_COUNTER} finetune requests pending")
 
-    print(f"SERVER LOG: Saved client model as {LOCAL_MODEL_DIR}/{hash}.zip")
     # trigger averaging if fetch counter reaches 0
     if FETCH_COUNTER == 0:
-        print("SERVER LOG: Received all client models")
-        if AVERAGING_ALGORITHM == "mean":
-            # setting daemon=True means the thread will exit if the server shuts down
-            thread = threading.Thread(target=average_models, args=[], daemon=True)
-            thread.start()
-            print("SERVER LOG: Spawned a thread to compute average of local models")
-        if AVERAGING_ALGORITHM == "mean":
-            # setting daemon=True means the thread will exit if the server shuts down
-            thread = threading.Thread(target=weight_average_models, args=[], daemon=True)
-            thread.start()
-            print("SERVER LOG: Spawned a thread to compute weighted average of local models")
+        print("SERVER LOG: Received all client models, commencing model averaging...")
+
+        # setting daemon=True means the thread will exit if the server shuts down
+        thread = threading.Thread(target=average_models, args=[AVG_ALGO], daemon=True)
+        thread.start()
+        print(f"SERVER LOG: Spawned a thread to compute {AVG_ALGO} of local models")
 
     return Response(
         response = json.dumps({
-            "resource": f"{LOCAL_MODEL_DIR}/{hash}.zip",
+            "resource": f"local_v{version}_{hash}.zip",
             "details": f"Successfully saved client model"
         }),
         status = 200,
         headers = {"Content-Type": "application/json"}
     )
 
-def average_models():
+def average_models(algo):
     """
     Run federated averaging to combine the finetuned models.
     """
-    # TODO: delegate task to spark cluster
-    model_loc = f"{MODEL_DIR}/global_v{MODEL_VER}"
-    data_loc = f"{DATA_DIR}/test.csv"
+    global MODEL_VER
+    global STATUS
 
+    # merge on spark cluster
+    STATUS["merging"] = True
+    blobs = bucket.list_blobs(prefix="models")
+    models_list = [b.name for b in blobs if b.name.endswith(".zip") 
+                  and b.name.split('/')[-1].startswith(f"local_v{MODEL_VER}_")]
+    if algo=="mean":
+        weights = {h:1 for h in STATUS["sample_sizes"]}
+    elif algo=="wmean":
+        s = sum(STATUS["sample_sizes"].values())
+        weights = {h:STATUS["sample_sizes"]/s for h in STATUS["sample_sizes"]}
+    total = len(models_list)
+
+    print("SERVER LOG: Starting MapReduce...")
+    curr_time = time.time()
+    rdd = spark.sparkContext.parallelize(models_list)
+    avg_model = rdd.map(lambda m: map_func(m, weights[m.split('_')[2].split('.')[0]], total)).reduce(reduce_func)
+    print(f"SERVER LOG: MapReduce completed. Time taken: {time.time()-curr_time}")
+
+    os.mkdir(f"global_v{MODEL_VER+1}")
+    avg_model.save_pretrained(f"global_v{MODEL_VER+1}")
+    print("SERVER LOG: Saved model binaries...")
+
+    if not os.path.exists(f"configs"):
+        if not os.path.exists(f"configs.zip"):
+            blob = bucket.blob("models/configs.zip")
+            if not blob.exists():
+                print(f"SERVER LOG: Could not find model config constants on the bucket")
+            else:
+                blob.download_to_filename("configs.zip")
+        os.system(f"unzip configs.zip")
+
+    os.system(f"cp configs/* global_v{MODEL_VER+1}")
+    os.system(f"zip -r global_v{MODEL_VER+1}.zip global_v{MODEL_VER+1}")
+    print("SERVER LOG: Added config files to model package...")
+
+    blob = bucket.blob(f"models/global_v{MODEL_VER+1}.zip")
+    blob.upload_from_filename(f"global_v{MODEL_VER+1}.zip")
+    print("SERVER LOG: Saved averaged model to bucket.")
+    STATUS["merging"] = False
+
+    print(f"SERVER LOG: Starting evaluation on model global_v{MODEL_VER+1}...")
+    STATUS["evaluating"] = True
+    if not os.path.exists("test.csv"):
+        blob = bucket.get_blob("data/test.csv")
+        blob.download_to_filename("test.csv")
+    # evaluate_model(f"global_v{MODEL_VER+1}", "test.csv")
+    STATUS["evaluating"] = False
+    print(f"SERVER LOG: Evaluation completed. Check the tracking page to see scores.")
+    
     MODEL_VER += 1
-    evaluate_model(model_loc, data_loc)
+
+    STATUS["version"] = MODEL_VER
+    STATUS["sample_sizes"] = {}
+    fl_status(op="write")
+    print(f"SERVER LOG: Global model version updated. Global model status updated.")
+
     return
 
-def weight_average_models():
-    """
-    Run weighted federated averaging to combine the finetuned models.
-    """
-    # TODO: delegate task to spark cluster
-
-    MODEL_VER += 1
-    evaluate_model()
+def fl_status(op="read"):
+    global STATUS
+    blob = bucket.get_blob("models/fl.json")
+    if op == "read":
+        STATUS = json.loads(blob.download_as_text())
+    elif op=="write":
+        blob.upload_from_string(json.dumps(STATUS))
     return
-
-def bucket_list(dir_loc):
-    blobs = bucket.list_blobs(prefix=dir_loc)
-    return [b.split('/')[-1] if not b.name.endswith('/') 
-            else b.split('/')[-2]+'/' for b in blobs]
-
-def bucket_write(file_loc, tgt_loc):
-    blob = bucket.blob(file_loc)
-    blob.upload_from_filename(tgt_loc)
-
-def bucket_read(tgt_loc, file_loc):
-    blob = bucket.blob(tgt_loc)
-    blob.download_to_filename(file_loc)
 
 if __name__ == '__main__':
+    fl_status(op="read")
     app.run(host="0.0.0.0", port=5000, debug=True)

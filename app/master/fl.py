@@ -1,3 +1,7 @@
+import os
+
+from google.cloud import storage
+
 import pandas as pd
 import numpy as np
 
@@ -30,20 +34,33 @@ def evaluate_model(model_loc, data_loc):
     print(classification_report(eval_df.labels, preds))
     
     return
-
-def map_func(model):
-    # divide operation
-    with torch.no_grad():
-        layers = model.state_dict().keys()
-        for layer in layers:
-            model.state_dict()[layer].data.copy_(model.state_dict()[layer].data / 2)
-        return model
     
-def reduce_func(model1, model2, weights=(1, 1)):
-    # add operation
+def map_func(addr, w, s):
+    """
+    weight and divide each model
+    """
+    # client objects cannot be defined outside the scope of the function
+    storage_client = storage.Client()
+    bucket = storage_client.get_bucket("bdastorage")
+    blob = bucket.get_blob(addr)
+    name = blob.name.split('/')[-1]
+    blob.download_to_filename(name)
+
+    os.system(f"unzip {name}")
+    model = ClassificationModel("distilbert", name, use_cuda=False)
+    with torch.no_grad():
+        layers = model.model.state_dict().keys()
+        for layer in layers:
+            model.model.state_dict()[layer].data.copy_(model.model.state_dict()[layer].data*w/s)
+    return model.model
+    
+def reduce_func(model1, model2):
+    """
+    add all weighted models
+    """
     with torch.no_grad():
         added = DistilBertForSequenceClassification(config=model1.config)
         layers = model1.state_dict().keys()
         for layer in layers:
-            added.state_dict()[layer].data.copy_(weights[0]*model1.state_dict()[layer].data + weights[1]*model2.state_dict()[layer].data)
+            added.state_dict()[layer].data.copy_(model1.state_dict()[layer].data + model2.state_dict()[layer].data)
         return added
