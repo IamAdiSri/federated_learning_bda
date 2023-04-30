@@ -59,6 +59,7 @@ def fetch_model(version):
             response = json.dumps({
                 "resource": f"global_v{version}",
                 "details": "Requested version is unavailable"
+                # send global_version
             }),
             status = 404
         )
@@ -115,6 +116,7 @@ def upload_model(version):
             response = json.dumps({
                 "resource": f"local_v{version}",
                 "details": "Upload request is for a bad version"
+                # Send global_version
             }),
             status = 404
         )
@@ -124,6 +126,7 @@ def upload_model(version):
             response = json.dumps({
                 "resource": f"local_v{version}",
                 "details": "Upload request denied"
+                #Send global_version
             }),
             status = 404
         )
