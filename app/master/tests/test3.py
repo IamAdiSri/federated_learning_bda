@@ -37,18 +37,19 @@ def reduce(model1, model2):
             added.state_dict()[layer].data.copy_(model1.state_dict()[layer].data + model2.state_dict()[layer].data)
     return added
 
-ct = time.time()
-s = 2
+s = [4]
 addr = "models/global_v0.zip"
-rdd = spark.sparkContext.parallelize([addr for _ in range(s)])
-avg_model = rdd.map(lambda x: mapp(addr, s)).reduce(reduce)
+for n in s:
+    ct = time.time()
+    rdd = spark.sparkContext.parallelize([addr for _ in range(n)])
+    avg_model = rdd.map(lambda x: mapp(addr, n)).reduce(reduce)
+    print(avg_model, time.time()-ct)
 
-os.makedirs("averaged")
-avg_model.save_pretrained("averaged") # saving averaged model
-os.system("zip -r averaged.zip averaged/")
+# os.makedirs("averaged")
+# avg_model.save_pretrained("averaged") # saving averaged model
+# os.system("zip -r averaged.zip averaged/")
 
-blob = bucket.blob("models/averaged.zip")
-blob.upload_from_filename("averaged.zip")
+# blob = bucket.blob("models/averaged.zip")
+# blob.upload_from_filename("averaged.zip")
 
-print(avg_model, time.time()-ct)
 
