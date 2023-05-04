@@ -39,7 +39,7 @@ class ClientTrain:
             return True
 
         elif response.status == 404:
-            server_model_version = response.global_version
+            server_model_version = response.server_version
             if self.version > server_model_version:
                 print("Server not ready with this model")
                 time.sleep(self.wait_time)
@@ -77,7 +77,7 @@ class ClientTrain:
             print('Zip file sent successfully')
             return True
         elif response.status == 404:
-            if self.version != response.global_version:
+            if self.version != response.server_version:
                 print("Discarding current model")
                 return False
             else:
