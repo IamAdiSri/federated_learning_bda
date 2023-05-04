@@ -3,6 +3,8 @@
 
 $PYSPARK_PYTHON -m pip install flask torch transformers simpletransformers
 
+export BUCKET_NAME="bdastorage"
+
 mkdir /home/dataproc/fl_server
 cd /home/dataproc/fl_server
 

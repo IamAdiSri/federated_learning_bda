@@ -58,8 +58,8 @@ def fetch_model(version):
         return Response(
             response = json.dumps({
                 "resource": f"global_v{version}",
-                "details": "Requested version is unavailable"
-                # send global_version
+                "details": "Requested version is unavailable",
+                "server_version": MODEL_VER,
             }),
             status = 404
         )
@@ -79,7 +79,8 @@ def fetch_model(version):
             return Response(
                 response = json.dumps({
                     "resource": f"global_v{version}",
-                    "details": "Could not find resource"
+                    "details": "Could not find resource",
+                    "server_version": MODEL_VER,
                 }),
                 status = 500
             )
@@ -115,8 +116,8 @@ def upload_model(version):
         return Response(
             response = json.dumps({
                 "resource": f"local_v{version}",
-                "details": "Upload request is for a bad version"
-                # Send global_version
+                "details": "Upload request is for a bad version",
+                "server_version": MODEL_VER,
             }),
             status = 404
         )
@@ -125,8 +126,8 @@ def upload_model(version):
         return Response(
             response = json.dumps({
                 "resource": f"local_v{version}",
-                "details": "Upload request denied"
-                #Send global_version
+                "details": "Upload request denied",
+                "server_version": MODEL_VER,
             }),
             status = 404
         )
