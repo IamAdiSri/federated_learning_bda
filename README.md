@@ -1,4 +1,4 @@
-# Flagging Hate Speech and Cyber-Bullying in Private Chats
+# Federated Learning for Flagging Hate Speech and Cyber-Bullying in Private Chats
 Using distributed machine learning and federated learning techniques to preserve privacy when learning from personal data.
 
 ## Architecture
