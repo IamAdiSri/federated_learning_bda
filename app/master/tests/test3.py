@@ -15,6 +15,7 @@ bucket = storage_client.get_bucket("bdastorage")
 sparkConf = SparkConf()
 spark = SparkSession.builder.config(conf=sparkConf).getOrCreate()
 
+print("SERVER LOG: SparkSession connected")
 def mapp(addr, s):
     # client objects cannot be defined outside the scope of the function
     storage_client = storage.Client()
@@ -37,13 +38,17 @@ def reduce(model1, model2):
             added.state_dict()[layer].data.copy_(model1.state_dict()[layer].data + model2.state_dict()[layer].data)
     return added
 
-s = [4]
+s = [4,3,4]
 addr = "models/global_v0.zip"
 for n in s:
+    print(f"SERVER LOG: Running MapReduce routine on {s} models")
     ct = time.time()
     rdd = spark.sparkContext.parallelize([addr for _ in range(n)])
     avg_model = rdd.map(lambda x: mapp(addr, n)).reduce(reduce)
-    print(avg_model, time.time()-ct)
+    print("SERVER LOG: Completed MapReduce routine")
+    print(" SERVER LOG: Averaged Model: ")
+    print(avg_model)
+    print(f"SERVER LOG: Time taken is {time.time()-ct} seconds")
 
 # os.makedirs("averaged")
 # avg_model.save_pretrained("averaged") # saving averaged model
