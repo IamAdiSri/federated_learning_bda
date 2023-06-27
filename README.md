@@ -1,6 +1,8 @@
 # Federated Learning for Flagging Hate Speech and Cyber-Bullying in Private Chats
 Using distributed machine learning and federated learning techniques to preserve privacy when learning from personal data.
 
+(Semester project for the course Spring 2023 course, CSCI-6502 Big Data Analytics, taught by Professor Qin (Christine) Lv at the University of Colorado, Boulder)
+
 ## Architecture
 ![Architecture Diagram](docs/assets/architecture.png)
 
